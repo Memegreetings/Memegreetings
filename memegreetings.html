@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Memegreetings</title>
+  <link href="https://fonts.googleapis.com/css2?family=Happ+Font+TH&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Happ Font TH', cursive;
+      background-color: #fff8ec;
+      color: #333;
+      background-image: url('https://www.transparenttextures.com/patterns/sketch.png');
+    }
+    header {
+      padding: 2rem;
+      text-align: center;
+      background-color: #f7d287;
+      border-bottom: 5px dashed #555;
+    }
+    header h1 {
+      font-size: 3rem;
+      margin: 0;
+      color: #222;
+      text-shadow: 2px 2px #fff;
+    }
+    .intro {
+      text-align: center;
+      padding: 1rem 2rem;
+      font-size: 1.3rem;
+    }
+    .shop {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 2rem;
+      padding: 2rem;
+    }
+    .card {
+      background-color: #fff;
+      border: 3px dashed #222;
+      padding: 1rem;
+      border-radius: 10px;
+      text-align: center;
+      box-shadow: 4px 4px 0px #ccc;
+    }
+    .card img {
+      width: 100%;
+      border: 2px solid #000;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 1.2rem;
+    }
+    .card .buy-section {
+      margin-top: 1rem;
+    }
+    .card .buy-section input {
+      width: 60px;
+      text-align: center;
+      padding: 0.3rem;
+      border-radius: 5px;
+      border: 2px dashed #333;
+    }
+    .card .buy-section button {
+      background-color: #f7d287;
+      border: 2px dashed #000;
+      padding: 0.5rem 1rem;
+      margin-left: 0.5rem;
+      cursor: pointer;
+      font-family: 'Happ Font TH', cursive;
+    }
+    .cart-section {
+      padding: 2rem;
+      background-color: #fff1d6;
+      border-top: 5px dashed #555;
+    }
+    .cart-section h2 {
+      text-align: center;
+    }
+    .cart {
+      max-width: 600px;
+      margin: auto;
+      background: #fff;
+      border: 3px dashed #333;
+      padding: 1rem;
+      border-radius: 10px;
+    }
+    .cart p {
+      margin: 0.5rem 0;
+    }
+    .cart .total {
+      font-weight: bold;
+      font-size: 1.2rem;
+      margin-top: 1rem;
+    }
+    .cart .payment-instructions {
+      margin-top: 1rem;
+      font-style: italic;
+    }
+    .customer-form {
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 1rem;
+      background: #fff;
+      border: 3px dashed #555;
+      border-radius: 10px;
+    }
+    .customer-form label {
+      display: block;
+      margin-top: 1rem;
+      font-weight: bold;
+    }
+    .customer-form input, .customer-form textarea {
+      width: 100%;
+      padding: 0.5rem;
+      border: 2px dashed #999;
+      border-radius: 5px;
+      margin-top: 0.5rem;
+      font-family: 'Happ Font TH', cursive;
+    }
+    .customer-form button {
+      margin-top: 1rem;
+      background-color: #f7d287;
+      border: 2px dashed #000;
+      padding: 0.5rem 1rem;
+      font-family: 'Happ Font TH', cursive;
+      cursor: pointer;
+    }
+    .socials {
+      text-align: center;
+      margin-top: 2rem;
+    }
+    .socials a {
+      margin: 0 1rem;
+      text-decoration: none;
+      font-size: 1.5rem;
+      color: #000;
+    }
+    .footer {
+      text-align: center;
+      padding: 2rem;
+      font-size: 1rem;
+      background-color: #f7d287;
+      border-top: 5px dashed #555;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Memegreetings</h1>
+  </header>
+  <section class="intro">
+    <p>Meme cards for degens. Because feelings exist in crypto too. Hand-drawn, darkly funny, and painfully real.</p>
+    <p>Printed IRL. Shipped globally. Straight from the blockchain to your mailbox.</p>
+    <p><strong>Cards are $5 each or any 5 for $20.</strong></p>
+  </section>
+
+  <section class="shop" id="shop"></section>
+
+  <section class="customer-form">
+    <h2>Enter Your Details</h2>
+    <form id="orderForm">
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" required>
+
+      <label for="address">Shipping Address</label>
+      <input type="text" id="address" name="address" required>
+
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required>
+
+      <label for="message">Optional Custom Message</label>
+      <textarea id="message" name="message" rows="3"></textarea>
+
+      <input type="submit" value="Submit Details">
+    </form>
+  </section>
+
+  <section class="cart-section">
+    <h2>Your Cart</h2>
+    <div class="cart" id="cart"></div>
+  </section>
+
+  <section class="socials">
+    <a href="https://twitter.com/memegreetings" target="_blank">🐦 Twitter</a>
+    <a href="https://t.me/memegreetings" target="_blank">💬 Telegram</a>
+    <a href="mailto:orders@memegreetings.xyz">📧 Email</a>
+  </section>
+
+  <footer class="footer">
+    <p>© 2025 Memegreetings. All pain reserved. Follow us on Twitter/X and Telegram for drops and degenerate love notes.</p>
+  </footer>
+
+  <script>
+    const products = [
+      { name: 'Sorry for Your Rug', price: 5, img: 'images/card1.png' },
+      { name: 'WAGMI Wedding', price: 5, img: 'images/card2.png' },
+      { name: 'Seed Phrase Breakup', price: 5, img: 'images/card3.png' },
+      { name: 'Burnt Again', price: 5, img: 'images/card4.png' },
+      { name: 'Happy Degen Day', price: 5, img: 'images/card5.png' },
+      { name: 'Gas Fee Love', price: 5, img: 'images/card6.png' },
+      { name: 'Bear Market Bros', price: 5, img: 'images/card7.png' },
+      { name: 'Moon Vows', price: 5, img: 'images/card8.png' },
+    ];
+
+    const cart = {};
+    const shop = document.getElementById('shop');
+    const cartDiv = document.getElementById('cart');
+
+    products.forEach((product, index) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <img src="${product.img}" alt="${product.name}">
+        <h2>${product.name}</h2>
+        <p>£${product.price} each</p>
+        <div class="buy-section">
+          <input type="number" min="0" value="0" id="qty-${index}" />
+          <button onclick="addToCart(${index})">Add to Cart</button>
+        </div>
+      `;
+      shop.appendChild(card);
+    });
+
+    function addToCart(index) {
+      const qty = parseInt(document.getElementById(`qty-${index}`).value);
+      if (!qty || qty < 1) return;
+      cart[index] = (cart[index] || 0) + qty;
+      updateCart();
+    }
+
+    function updateCart() {
+      cartDiv.innerHTML = '';
+      let totalCards = 0;
+      let total = 0;
+      for (const [index, qty] of Object.entries(cart)) {
+        const product = products[index];
+        const subtotal = qty * product.price;
+        totalCards += qty;
+        cartDiv.innerHTML += `<p>${product.name} x ${qty} = £${subtotal}</p>`;
+      }
+
+      if (totalCards >= 5) {
+        total = 20;
+        cartDiv.innerHTML += `<p><em>Bundle deal: 5 cards for $20 applied</em></p>`;
+      } else {
+        for (const [index, qty] of Object.entries(cart)) {
+          total += qty * products[index].price;
+        }
+      }
+
+      cartDiv.innerHTML += `<p class="total">Total: £${total}</p>`;
+      cartDiv.innerHTML += `
+        <div class="payment-instructions">
+          Send $${total} worth of crypto to:<br>
+          SOL: AhFsj4X1RqXj4Uk4cjKhuD86Y9731bqdNYXnD3VqjnjN<br>
+          ETH: 0x774ed2Bd944D6FEc12dfC916daA2E92D716e98A3<br>
+          <br>
+          Then send proof of payment to <a href="mailto:orders@memegreetings.xyz">orders@memegreetings.xyz</a>
+        </div>
+      `;
+    }
+
+    document.getElementById('orderForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const name = document.getElementById('name').value;
+      const address = document.getElementById('address').value;
+      const email = document.getElementById('email').value;
+      const message = document.getElementById('message').value;
+
+      let orderDetails = '';
+      for (const [index, qty] of Object.entries(cart)) {
+        if (qty > 0) {
+          orderDetails += `\n${products[index].name} x ${qty}`;
+        }
+      }
+
+      const mailtoLink = `mailto:loopylupin22@gmail.com?subject=Memegreetings Order&body=Name: ${name}%0AAddress: ${address}%0AEmail: ${email}%0AMessage: ${message}%0AOrder:${orderDetails}`;
+      window.location.href = mailtoLink;
+    });
+  </script>
+</body>
+</html>
