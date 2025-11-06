@@ -4,12 +4,14 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -137,6 +139,20 @@ class _AlarmTabState extends State<AlarmTab> {
   final AudioPlayer _player = AudioPlayer();
   bool _alarmScheduled = false;
   DateTime? _nextAlarmTime;
+  final Set<int> _selectedDays = {DateTime.now().weekday};
+  AlarmToneOption _selectedTone = alarmToneOptions.first;
+  bool _vibrationEnabled = true;
+  final Set<AlarmChallengeType> _selectedChallenges = {AlarmChallengeType.tap};
+
+  static const List<String> _weekdayLabels = [
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
+  ];
 
   @override
   void dispose() {
@@ -209,17 +225,22 @@ class _AlarmTabState extends State<AlarmTab> {
     }
 
     _alarmTimer?.cancel();
-    final now = DateTime.now();
-    var scheduled = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      _selectedTime!.hour,
-      _selectedTime!.minute,
-    );
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
+    if (_selectedDays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select at least one day for the alarm.')),
+      );
+      return;
     }
+
+    if (_selectedChallenges.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose at least one wake-up challenge.')),
+      );
+      return;
+    }
+
+    final now = DateTime.now();
+    final scheduled = _findNextAlarmDate(now);
     final delay = scheduled.difference(now);
     _alarmTimer = Timer(delay, _handleAlarmFire);
     setState(() {
@@ -227,37 +248,35 @@ class _AlarmTabState extends State<AlarmTab> {
       _alarmScheduled = true;
     });
 
+    final label = _weekdayLabels[scheduled.weekday - 1];
+    final timeLabel = TimeOfDay.fromDateTime(scheduled).format(context);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Alarm set for ${TimeOfDay.fromDateTime(scheduled).format(context)}.')),
+      SnackBar(content: Text('Alarm set for $label at $timeLabel.')),
     );
   }
 
   // Plays the alarm audio and shows a dismiss dialog.
   Future<void> _handleAlarmFire() async {
     await _player.setReleaseMode(ReleaseMode.loop);
-    await _player.play(BytesSource(alarmToneBytes));
+    await _player.play(BytesSource(_selectedTone.bytes));
+
+    if (_vibrationEnabled) {
+      unawaited(HapticFeedback.heavyImpact());
+    }
 
     if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('Good Morning!'),
-          content: const Text('Time to shine. Ready to dive into your routine?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _dismissAlarm();
-              },
-              child: const Text('Dismiss'),
-            ),
-          ],
-        );
-      },
-    );
+    final completed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlarmChallengeDialog(
+            challenges: _selectedChallenges.toList(),
+          ),
+        ) ??
+        false;
+    if (!mounted) return;
+    if (completed) {
+      await _dismissAlarm();
+    }
   }
 
   // Stops the audio and notifies the parent to open the routine tab.
@@ -293,6 +312,10 @@ class _AlarmTabState extends State<AlarmTab> {
           ),
           const SizedBox(height: 24),
           _buildTimeCard(context),
+          const SizedBox(height: 24),
+          _buildDaySelector(),
+          const SizedBox(height: 24),
+          _buildChallengeSelector(),
           const SizedBox(height: 24),
           Row(
             children: [
@@ -369,16 +392,211 @@ class _AlarmTabState extends State<AlarmTab> {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _buildToneDropdown(context),
+              _buildVibrationToggle(),
+            ],
+          ),
         ],
       ),
     );
+  }
+
+  Widget _buildDaySelector() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 10)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Repeat',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: List.generate(_weekdayLabels.length, (index) {
+              final dayIndex = index + 1;
+              final isSelected = _selectedDays.contains(dayIndex);
+              return FilterChip(
+                label: Text(_weekdayLabels[index]),
+                selected: isSelected,
+                onSelected: (value) {
+                  setState(() {
+                    if (value) {
+                      _selectedDays.add(dayIndex);
+                    } else {
+                      _selectedDays.remove(dayIndex);
+                    }
+                  });
+                },
+                showCheckmark: false,
+                selectedColor: Colors.deepPurple.shade100,
+                backgroundColor: Colors.white,
+                labelStyle: TextStyle(
+                  color: isSelected ? Colors.deepPurple : Colors.black87,
+                  fontWeight: FontWeight.w600,
+                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChallengeSelector() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 10)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Wake-up Challenges',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Choose the tests you must finish before the alarm can be dismissed.',
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: AlarmChallengeType.values.map((challenge) {
+              final isSelected = _selectedChallenges.contains(challenge);
+              return FilterChip(
+                label: Text(challenge.label),
+                selected: isSelected,
+                onSelected: (value) {
+                  setState(() {
+                    if (value) {
+                      _selectedChallenges.add(challenge);
+                    } else {
+                      _selectedChallenges.remove(challenge);
+                    }
+                  });
+                },
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToneDropdown(BuildContext context) {
+    return DropdownButtonHideUnderline(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.deepPurple.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: DropdownButton<AlarmToneOption>(
+          value: _selectedTone,
+          icon: const Icon(Icons.arrow_drop_down),
+          onChanged: (tone) {
+            if (tone == null) return;
+            setState(() => _selectedTone = tone);
+          },
+          items: [
+            for (final tone in alarmToneOptions)
+              DropdownMenuItem(
+                value: tone,
+                child: Text(tone.label),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVibrationToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.deepPurple.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.vibration, color: Colors.deepPurple),
+          const SizedBox(width: 8),
+          const Text('Vibration'),
+          Switch(
+            value: _vibrationEnabled,
+            onChanged: (value) => setState(() => _vibrationEnabled = value),
+            activeColor: Colors.deepPurple,
+          ),
+        ],
+      ),
+    );
+  }
+
+  DateTime _findNextAlarmDate(DateTime from) {
+    final time = _selectedTime!;
+    for (var offset = 0; offset < 14; offset++) {
+      final candidate = DateTime(
+        from.year,
+        from.month,
+        from.day,
+        time.hour,
+        time.minute,
+      ).add(Duration(days: offset));
+      final isValidDay = _selectedDays.contains(candidate.weekday);
+      if (!isValidDay) {
+        continue;
+      }
+      if (!candidate.isBefore(from)) {
+        return candidate;
+      }
+    }
+    // Fallback: schedule one week later on the first selected day.
+    final sortedDays = _selectedDays.toList()..sort();
+    final firstDay = sortedDays.first;
+    final daysUntil = (firstDay - from.weekday + 7) % 7;
+    final scheduled = DateTime(
+      from.year,
+      from.month,
+      from.day,
+      time.hour,
+      time.minute,
+    ).add(Duration(days: daysUntil == 0 ? 7 : daysUntil));
+    return scheduled;
   }
 
   // Stylish card summarising when the alarm will chime.
   Widget _buildCountdownCard(BuildContext context) {
     final next = _nextAlarmTime!;
     final time = TimeOfDay.fromDateTime(next).format(context);
-    final formatted = '${next.year}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
+    final formattedDate =
+        '${next.year}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
+    final weekdayLabel = _weekdayLabels[next.weekday - 1];
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -399,7 +617,7 @@ class _AlarmTabState extends State<AlarmTab> {
           ),
           const SizedBox(height: 8),
           Text(
-            '$formatted • $time',
+            '$weekdayLabel • $formattedDate • $time',
             style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
@@ -409,6 +627,373 @@ class _AlarmTabState extends State<AlarmTab> {
           ),
         ],
       ),
+    );
+  }
+}
+
+enum AlarmChallengeType { tap, math, copy }
+
+extension AlarmChallengeTypeX on AlarmChallengeType {
+  String get label {
+    switch (this) {
+      case AlarmChallengeType.tap:
+        return 'Rapid Taps';
+      case AlarmChallengeType.math:
+        return 'Quick Maths';
+      case AlarmChallengeType.copy:
+        return 'Copy the Phrase';
+    }
+  }
+
+  String get description {
+    switch (this) {
+      case AlarmChallengeType.tap:
+        return 'Tap the button 10 times to prove you are awake.';
+      case AlarmChallengeType.math:
+        return 'Solve three random addition problems in a row.';
+      case AlarmChallengeType.copy:
+        return 'Type the displayed sentence perfectly to finish.';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case AlarmChallengeType.tap:
+        return Icons.touch_app;
+      case AlarmChallengeType.math:
+        return Icons.calculate;
+      case AlarmChallengeType.copy:
+        return Icons.text_fields;
+    }
+  }
+}
+
+class AlarmChallengeDialog extends StatefulWidget {
+  const AlarmChallengeDialog({super.key, required this.challenges});
+
+  final List<AlarmChallengeType> challenges;
+
+  @override
+  State<AlarmChallengeDialog> createState() => _AlarmChallengeDialogState();
+}
+
+class _AlarmChallengeDialogState extends State<AlarmChallengeDialog> {
+  late final Map<AlarmChallengeType, bool> _completed = {
+    for (final challenge in widget.challenges) challenge: false,
+  };
+
+  bool get _allComplete => _completed.values.every((done) => done);
+
+  void _markComplete(AlarmChallengeType type) {
+    if (_completed[type] == true) {
+      return;
+    }
+    setState(() {
+      _completed[type] = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async => false,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Complete Your Wake-up Tests'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: widget.challenges.map((type) {
+                final isComplete = _completed[type] ?? false;
+                return _buildChallengeCard(type, isComplete);
+              }).toList(),
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton.icon(
+            onPressed: _allComplete ? () => Navigator.of(context).pop(true) : null,
+            icon: const Icon(Icons.check),
+            label: const Text('Dismiss Alarm'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChallengeCard(AlarmChallengeType type, bool isComplete) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(type.icon, color: isComplete ? Colors.green : Colors.deepPurple),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    type.label,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: isComplete
+                      ? const Icon(Icons.check_circle, color: Colors.green, key: ValueKey('done'))
+                      : const SizedBox.shrink(key: ValueKey('pending')),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(type.description),
+            const SizedBox(height: 12),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: isComplete
+                  ? Text(
+                      'Completed! Nice work.',
+                      key: ValueKey('${type.name}-completed'),
+                    )
+                  : _buildChallengeBody(type),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChallengeBody(AlarmChallengeType type) {
+    switch (type) {
+      case AlarmChallengeType.tap:
+        return TapToWakeChallenge(
+          key: ValueKey(type),
+          onCompleted: () => _markComplete(type),
+        );
+      case AlarmChallengeType.math:
+        return MathWakeChallenge(
+          key: ValueKey(type),
+          onCompleted: () => _markComplete(type),
+        );
+      case AlarmChallengeType.copy:
+        return CopySentenceWakeChallenge(
+          key: ValueKey(type),
+          onCompleted: () => _markComplete(type),
+        );
+    }
+  }
+}
+
+class TapToWakeChallenge extends StatefulWidget {
+  const TapToWakeChallenge({super.key, required this.onCompleted, this.tapGoal = 10});
+
+  final VoidCallback onCompleted;
+  final int tapGoal;
+
+  @override
+  State<TapToWakeChallenge> createState() => _TapToWakeChallengeState();
+}
+
+class _TapToWakeChallengeState extends State<TapToWakeChallenge> {
+  int _tapCount = 0;
+  bool _reported = false;
+
+  void _increment() {
+    if (_reported) {
+      return;
+    }
+    setState(() {
+      _tapCount += 1;
+    });
+    if (_tapCount >= widget.tapGoal && !_reported) {
+      _reported = true;
+      widget.onCompleted();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_tapCount / widget.tapGoal).clamp(0.0, 1.0).toDouble();
+    final remaining = (widget.tapGoal - _tapCount).clamp(0, widget.tapGoal).toInt();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        LinearProgressIndicator(value: progress),
+        const SizedBox(height: 8),
+        Text('Taps remaining: $remaining'),
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          onPressed: _increment,
+          icon: const Icon(Icons.touch_app),
+          label: const Text('Tap me!'),
+        ),
+      ],
+    );
+  }
+}
+
+class MathWakeChallenge extends StatefulWidget {
+  const MathWakeChallenge({super.key, required this.onCompleted, this.requiredCorrect = 3});
+
+  final VoidCallback onCompleted;
+  final int requiredCorrect;
+
+  @override
+  State<MathWakeChallenge> createState() => _MathWakeChallengeState();
+}
+
+class _MathWakeChallengeState extends State<MathWakeChallenge> {
+  final TextEditingController _controller = TextEditingController();
+  final Random _random = Random();
+  int _a = 0;
+  int _b = 0;
+  int _correctAnswers = 0;
+  String? _feedback;
+  bool _reported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _generateQuestion();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _generateQuestion() {
+    setState(() {
+      _a = _random.nextInt(10) + 1;
+      _b = _random.nextInt(10) + 1;
+    });
+    _controller.clear();
+  }
+
+  void _submit() {
+    if (_reported) {
+      return;
+    }
+    final answerText = _controller.text.trim();
+    final expected = _a + _b;
+    final parsed = int.tryParse(answerText);
+    if (parsed == expected) {
+      setState(() {
+        _correctAnswers += 1;
+        final remaining = widget.requiredCorrect - _correctAnswers;
+        _feedback =
+            remaining > 0 ? 'Correct! $remaining to go.' : 'All questions solved!';
+      });
+      if (_correctAnswers >= widget.requiredCorrect) {
+        _reported = true;
+        widget.onCompleted();
+      } else {
+        _generateQuestion();
+      }
+    } else {
+      setState(() {
+        _feedback = 'Not quite. Try again!';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$_a + $_b = ?'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'Enter answer',
+          ),
+          onSubmitted: (_) => _submit(),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            FilledButton(
+              onPressed: _submit,
+              child: const Text('Check'),
+            ),
+            const SizedBox(width: 12),
+            Text('Solved: $_correctAnswers / ${widget.requiredCorrect}'),
+          ],
+        ),
+        if (_feedback != null) ...[
+          const SizedBox(height: 4),
+          Text(_feedback!),
+        ],
+      ],
+    );
+  }
+}
+
+class CopySentenceWakeChallenge extends StatefulWidget {
+  const CopySentenceWakeChallenge({
+    super.key,
+    required this.onCompleted,
+    this.sentence = 'I earn my morning by waking with purpose.',
+  });
+
+  final VoidCallback onCompleted;
+  final String sentence;
+
+  @override
+  State<CopySentenceWakeChallenge> createState() => _CopySentenceWakeChallengeState();
+}
+
+class _CopySentenceWakeChallengeState extends State<CopySentenceWakeChallenge> {
+  final TextEditingController _controller = TextEditingController();
+  bool _reported = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleChanged(String value) {
+    if (_reported) {
+      return;
+    }
+    if (value.trim() == widget.sentence) {
+      _reported = true;
+      widget.onCompleted();
+      setState(() {});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = _reported;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Sentence: "${widget.sentence}"'),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _controller,
+          readOnly: completed,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'Type the sentence exactly',
+          ),
+          onChanged: _handleChanged,
+        ),
+        const SizedBox(height: 8),
+        const Text('Match punctuation and case to pass this test.'),
+      ],
     );
   }
 }
