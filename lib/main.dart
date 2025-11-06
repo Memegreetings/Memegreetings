@@ -239,20 +239,39 @@ class _AlarmTabState extends State<AlarmTab> {
       return;
     }
 
+    _scheduleNextOccurrence(showFeedback: true);
+  }
+
+  void _scheduleNextOccurrence({DateTime? from, bool showFeedback = false}) {
+    if (_selectedTime == null || !mounted) {
+      return;
+    }
+
     final now = DateTime.now();
-    final scheduled = _findNextAlarmDate(now);
+    final reference = from != null && from.isAfter(now) ? from : now;
+    final scheduled = _findNextAlarmDate(reference);
     final delay = scheduled.difference(now);
-    _alarmTimer = Timer(delay, _handleAlarmFire);
+    final safeDelay = delay.isNegative ? Duration.zero : delay;
+
+    _alarmTimer?.cancel();
+    _alarmTimer = Timer(safeDelay, _handleAlarmFire);
+
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _nextAlarmTime = scheduled;
       _alarmScheduled = true;
     });
 
-    final label = _weekdayLabels[scheduled.weekday - 1];
-    final timeLabel = TimeOfDay.fromDateTime(scheduled).format(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Alarm set for $label at $timeLabel.')),
-    );
+    if (showFeedback) {
+      final label = _weekdayLabels[scheduled.weekday - 1];
+      final timeLabel = TimeOfDay.fromDateTime(scheduled).format(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Alarm set for $label at $timeLabel.')),
+      );
+    }
   }
 
   // Plays the alarm audio and shows a dismiss dialog.
@@ -283,10 +302,23 @@ class _AlarmTabState extends State<AlarmTab> {
   Future<void> _dismissAlarm() async {
     await _player.stop();
     _alarmTimer?.cancel();
-    setState(() {
-      _alarmScheduled = false;
-      _nextAlarmTime = null;
-    });
+    final previousAlarm = _nextAlarmTime;
+    final shouldReschedule =
+        _selectedTime != null && _selectedDays.isNotEmpty && previousAlarm != null;
+
+    if (shouldReschedule) {
+      _scheduleNextOccurrence(
+        from: previousAlarm.add(const Duration(minutes: 1)),
+        showFeedback: false,
+      );
+    } else {
+      if (mounted) {
+        setState(() {
+          _alarmScheduled = false;
+          _nextAlarmTime = null;
+        });
+      }
+    }
     widget.onAlarmDismissed();
   }
 
@@ -597,6 +629,8 @@ class _AlarmTabState extends State<AlarmTab> {
     final formattedDate =
         '${next.year}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
     final weekdayLabel = _weekdayLabels[next.weekday - 1];
+    final repeatDays = _selectedDays.toList()..sort();
+    final repeatLabel = repeatDays.map((day) => _weekdayLabels[day - 1]).join(', ');
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -621,6 +655,13 @@ class _AlarmTabState extends State<AlarmTab> {
             style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
+          if (repeatLabel.isNotEmpty) ...[
+            Text(
+              'Repeats on: $repeatLabel',
+              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+          ],
           const Text(
             'Keep your device awake or nearby – we will gently remind you when it is go-time.',
             style: TextStyle(color: Colors.white),
