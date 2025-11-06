@@ -143,6 +143,8 @@ class _AlarmTabState extends State<AlarmTab> {
   AlarmToneOption _selectedTone = alarmToneOptions.first;
   bool _vibrationEnabled = true;
   final Set<AlarmChallengeType> _selectedChallenges = {AlarmChallengeType.tap};
+  final TextEditingController _labelController =
+      TextEditingController(text: 'Morning Boost');
 
   static const List<String> _weekdayLabels = [
     'Mon',
@@ -158,6 +160,7 @@ class _AlarmTabState extends State<AlarmTab> {
   void dispose() {
     _alarmTimer?.cancel();
     _player.dispose();
+    _labelController.dispose();
     super.dispose();
   }
 
@@ -250,8 +253,15 @@ class _AlarmTabState extends State<AlarmTab> {
 
     final label = _weekdayLabels[scheduled.weekday - 1];
     final timeLabel = TimeOfDay.fromDateTime(scheduled).format(context);
+    final alarmLabel = _labelController.text.trim();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Alarm set for $label at $timeLabel.')),
+      SnackBar(
+        content: Text(
+          alarmLabel.isEmpty
+              ? 'Alarm set for $label at $timeLabel.'
+              : '“$alarmLabel” set for $label at $timeLabel.',
+        ),
+      ),
     );
   }
 
@@ -270,6 +280,7 @@ class _AlarmTabState extends State<AlarmTab> {
           barrierDismissible: false,
           builder: (context) => AlarmChallengeDialog(
             challenges: _selectedChallenges.toList(),
+            alarmLabel: _labelController.text.trim(),
           ),
         ) ??
         false;
@@ -312,6 +323,8 @@ class _AlarmTabState extends State<AlarmTab> {
           ),
           const SizedBox(height: 24),
           _buildTimeCard(context),
+          const SizedBox(height: 24),
+          _buildLabelField(),
           const SizedBox(height: 24),
           _buildDaySelector(),
           const SizedBox(height: 24),
@@ -406,6 +419,52 @@ class _AlarmTabState extends State<AlarmTab> {
     );
   }
 
+  Widget _buildLabelField() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 10)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Alarm Label',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _labelController,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.edit_note_outlined),
+              hintText: 'Add a name like “Gym Prep” or “Study Sprint”',
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.2)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.2)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: const BorderSide(color: Colors.deepPurple, width: 2),
+              ),
+            ),
+            textInputAction: TextInputAction.done,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDaySelector() {
     return Container(
       width: double.infinity,
@@ -475,12 +534,12 @@ class _AlarmTabState extends State<AlarmTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Wake-up Challenges',
+            'Morning Challenges',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Choose the tests you must finish before the alarm can be dismissed.',
+            'Choose the wake-up quests you must finish before the alarm can be dismissed.',
           ),
           const SizedBox(height: 16),
           Wrap(
@@ -597,6 +656,7 @@ class _AlarmTabState extends State<AlarmTab> {
     final formattedDate =
         '${next.year}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
     final weekdayLabel = _weekdayLabels[next.weekday - 1];
+    final label = _labelController.text.trim();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -615,6 +675,17 @@ class _AlarmTabState extends State<AlarmTab> {
             'Alarm Scheduled',
             style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
           ),
+          if (label.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             '$weekdayLabel • $formattedDate • $time',
@@ -669,9 +740,14 @@ extension AlarmChallengeTypeX on AlarmChallengeType {
 }
 
 class AlarmChallengeDialog extends StatefulWidget {
-  const AlarmChallengeDialog({super.key, required this.challenges});
+  const AlarmChallengeDialog({
+    super.key,
+    required this.challenges,
+    this.alarmLabel,
+  });
 
   final List<AlarmChallengeType> challenges;
+  final String? alarmLabel;
 
   @override
   State<AlarmChallengeDialog> createState() => _AlarmChallengeDialogState();
@@ -699,7 +775,20 @@ class _AlarmChallengeDialogState extends State<AlarmChallengeDialog> {
       onWillPop: () async => false,
       child: AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Complete Your Wake-up Tests'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if ((widget.alarmLabel ?? '').isNotEmpty) ...[
+              Text(
+                widget.alarmLabel!,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+            ],
+            const Text('Complete Your Wake-up Tests'),
+          ],
+        ),
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
