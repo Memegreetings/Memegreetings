@@ -424,7 +424,14 @@ class MorningRoutineTab extends StatefulWidget {
 }
 
 class MorningRoutineTabState extends State<MorningRoutineTab> {
-  final List<RoutineStep> _steps = RoutineStep.defaultSteps();
+  static const _planPrefsKey = 'user_routine_plan';
+
+  final List<RoutineStep> _availableSteps = RoutineStep.templates();
+  List<RoutineStep> _activeSteps = [];
+  List<String> _selectedStepIds = [];
+  bool _planLoaded = false;
+  SharedPreferences? _preferences;
+
   bool _isRunning = false;
   bool _isCompleted = false;
   int _currentIndex = 0;
@@ -432,8 +439,347 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
   RoutineEntry? _pendingEntry;
   final List<RoutineStepResult> _results = [];
 
+  @override
+  void initState() {
+    super.initState();
+    _initialisePlan();
+  }
+
+  Future<void> _initialisePlan() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getStringList(_planPrefsKey);
+    final ids = _sanitizeSelection(stored);
+    setState(() {
+      _preferences = prefs;
+      _selectedStepIds = ids;
+      _activeSteps = _mapIdsToSteps(ids);
+      _planLoaded = true;
+    });
+  }
+
+  List<RoutineStep> _mapIdsToSteps(List<String> ids) {
+    final byId = {for (final step in _availableSteps) step.id: step};
+    final steps = <RoutineStep>[];
+    for (final id in ids) {
+      final step = byId[id];
+      if (step != null) {
+        steps.add(step);
+      }
+    }
+    return steps;
+  }
+
+  List<String> _sanitizeSelection(List<String>? stored) {
+    final validIds = <String>[];
+    final availableIds = _availableSteps.map((step) => step.id).toSet();
+    final seen = <String>{};
+    final source = stored == null || stored.isEmpty
+        ? RoutineStep.defaultSelection()
+        : stored;
+
+    for (final id in source) {
+      if (availableIds.contains(id) && seen.add(id)) {
+        validIds.add(id);
+      }
+    }
+
+    if (validIds.isEmpty) {
+      for (final fallback in RoutineStep.defaultSelection()) {
+        if (availableIds.contains(fallback) && seen.add(fallback)) {
+          validIds.add(fallback);
+        }
+      }
+    }
+
+    return validIds;
+  }
+
+  Future<void> _persistPlan(List<String> ids) async {
+    final prefs = _preferences ?? await SharedPreferences.getInstance();
+    await prefs.setStringList(_planPrefsKey, ids);
+    _preferences = prefs;
+  }
+
+  Future<void> _openPlanBuilder() async {
+    final result = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        final selection = List<String>.from(_selectedStepIds);
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final selectedSteps = _mapIdsToSteps(selection);
+            return DraggableScrollableSheet(
+              expand: false,
+              minChildSize: 0.55,
+              initialChildSize: 0.85,
+              maxChildSize: 0.95,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 24,
+                        offset: const Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  padding: EdgeInsets.only(
+                    left: 24,
+                    right: 24,
+                    top: 16,
+                    bottom: 16 + MediaQuery.of(context).viewInsets.bottom,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 48,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Colors.deepPurple.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Design your sunrise',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Select the actions that energise you. Reorder with the arrows and build a flow that feels personal.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 16),
+                      if (selectedSteps.isNotEmpty)
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (var i = 0; i < selectedSteps.length; i++)
+                              Chip(
+                                avatar: CircleAvatar(
+                                  backgroundColor: Colors.deepPurple.shade100,
+                                  child: Text(
+                                    '${i + 1}',
+                                    style: const TextStyle(color: Colors.black87),
+                                  ),
+                                ),
+                                label: Text(selectedSteps[i].title),
+                              ),
+                          ],
+                        )
+                      else
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.deepPurple.shade50,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            'No steps yet. Tap the cards below to add breathing, stretching, journaling and more.',
+                          ),
+                        ),
+                      const SizedBox(height: 16),
+                      Expanded(
+                        child: ListView.builder(
+                          controller: scrollController,
+                          itemCount: _availableSteps.length,
+                          itemBuilder: (context, index) {
+                            final step = _availableSteps[index];
+                            final isSelected = selection.contains(step.id);
+                            final selectedIndex = selection.indexOf(step.id);
+
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeInOut,
+                              margin: const EdgeInsets.symmetric(vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? Colors.deepPurple.shade50
+                                    : Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? Colors.deepPurple
+                                      : Colors.grey.shade200,
+                                ),
+                              ),
+                              child: ListTile(
+                                onTap: () {
+                                  setSheetState(() {
+                                    if (isSelected) {
+                                      selection.remove(step.id);
+                                    } else {
+                                      selection.add(step.id);
+                                    }
+                                  });
+                                },
+                                leading: CircleAvatar(
+                                  backgroundColor: Colors.deepPurple.shade100,
+                                  foregroundColor: Colors.deepPurple.shade900,
+                                  child: Icon(step.type.icon),
+                                ),
+                                title: Text(
+                                  step.title,
+                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                                subtitle: Text(step.description),
+                                trailing: isSelected
+                                    ? SizedBox(
+                                        width: 120,
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.end,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Move earlier',
+                                              icon: const Icon(Icons.arrow_upward),
+                                              onPressed: selectedIndex > 0
+                                                  ? () {
+                                                      setSheetState(() {
+                                                        final id =
+                                                            selection.removeAt(selectedIndex);
+                                                        selection.insert(selectedIndex - 1, id);
+                                                      });
+                                                    }
+                                                  : null,
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Move later',
+                                              icon: const Icon(Icons.arrow_downward),
+                                              onPressed: selectedIndex >= 0 &&
+                                                      selectedIndex < selection.length - 1
+                                                  ? () {
+                                                      setSheetState(() {
+                                                        final id =
+                                                            selection.removeAt(selectedIndex);
+                                                        selection.insert(selectedIndex + 1, id);
+                                                      });
+                                                    }
+                                                  : null,
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Remove',
+                                              icon: const Icon(Icons.close),
+                                              onPressed: () {
+                                                setSheetState(() {
+                                                  selection.remove(step.id);
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    : IconButton(
+                                        tooltip: 'Add to routine',
+                                        icon: const Icon(Icons.add_circle_outline),
+                                        onPressed: () {
+                                          setSheetState(() {
+                                            if (!selection.contains(step.id)) {
+                                              selection.add(step.id);
+                                            }
+                                          });
+                                        },
+                                      ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                                foregroundColor: Colors.deepPurple,
+                              ),
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: selection.length >= 3
+                                  ? () => Navigator.of(context).pop(selection)
+                                  : null,
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                                backgroundColor: Colors.deepPurple,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: Text(
+                                selection.length >= 3
+                                    ? 'Save ${selection.length} steps'
+                                    : 'Pick at least 3',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    final sanitized = _sanitizeSelection(result);
+    await _persistPlan(sanitized);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedStepIds = sanitized;
+      _activeSteps = _mapIdsToSteps(sanitized);
+      _isRunning = false;
+      _isCompleted = false;
+      _currentIndex = 0;
+      _pendingEntry = null;
+      _pendingPhotoBytes = null;
+      _results.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Saved! Tomorrow's sunrise is now uniquely yours."),
+      ),
+    );
+  }
+
   // Public method invoked when the alarm dismisses to reset and begin automatically.
   void startRoutine({bool fromAlarm = false}) {
+    if (!_planLoaded) {
+      return;
+    }
+    if (_activeSteps.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose a few actions to craft your routine first.')),
+      );
+      _openPlanBuilder();
+      return;
+    }
     setState(() {
       _isRunning = true;
       _isCompleted = false;
@@ -459,7 +805,7 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
     );
     _results.add(result);
 
-    if (_currentIndex + 1 >= _steps.length) {
+    if (_currentIndex + 1 >= _activeSteps.length) {
       final entry = RoutineEntry(timestamp: DateTime.now(), results: List.of(_results));
       setState(() {
         _pendingEntry = entry;
@@ -523,6 +869,9 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (!_planLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -538,12 +887,12 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Flow through energising tasks, guided affirmations, educational snippets, and photo prompts to document your progress.',
+            'Craft a morning that is truly yours. Pick from science-backed options and check each step off as you go.',
             style: theme.textTheme.bodyLarge,
           ),
           const SizedBox(height: 24),
           if (!_isRunning && !_isCompleted)
-            _buildIntroCard(theme)
+            _buildPlanOverview(theme)
           else if (_isRunning)
             _buildActiveRoutine(theme)
           else
@@ -553,8 +902,8 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
     );
   }
 
-  // First view encouraging the user to start the curated routine.
-  Widget _buildIntroCard(ThemeData theme) {
+  Widget _buildPlanOverview(ThemeData theme) {
+    final stepCount = _activeSteps.length;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -568,13 +917,62 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Curated just for you',
-            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Your personalised sunrise flow',
+                  style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _openPlanBuilder,
+                style: TextButton.styleFrom(foregroundColor: Colors.deepPurple),
+                icon: const Icon(Icons.tune, size: 18),
+                label: const Text('Edit'),
+              ),
+            ],
           ),
+          const SizedBox(height: 8),
+          Text(
+            stepCount > 0
+                ? 'You have $stepCount steps locked in. Tap Start to move through them and mark each one complete.'
+                : 'Choose at least three actions to shape how you rise.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
+          if (stepCount > 0)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _activeSteps
+                  .asMap()
+                  .entries
+                  .map(
+                    (entry) => Chip(
+                      backgroundColor: Colors.deepPurple.shade50,
+                      avatar: Icon(entry.value.type.icon, color: Colors.deepPurple, size: 18),
+                      label: Text('${entry.key + 1}. ${entry.value.title}'),
+                    ),
+                  )
+                  .toList(),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.shade50,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'No steps yet. Add breathing, stretching, reflection or photo prompts to create your unique flow.',
+              ),
+            ),
           const SizedBox(height: 12),
-          const Text(
-            'Press start and we will guide you step-by-step. Save photos and celebrate your streak when you are done.',
+          Text(
+            'Use Edit to add, remove or reorder actions whenever your mornings evolve.',
+            style: theme.textTheme.bodySmall?.copyWith(color: Colors.deepPurple.shade400),
           ),
           const SizedBox(height: 20),
           ElevatedButton(
@@ -585,7 +983,19 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
               minimumSize: const Size.fromHeight(52),
             ),
-            child: const Text('Start Morning Routine'),
+            child: const Text('Start & check off'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _openPlanBuilder,
+            icon: const Icon(Icons.add_task),
+            label: const Text('Choose different steps'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+              foregroundColor: Colors.deepPurple,
+              side: const BorderSide(color: Colors.deepPurple),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            ),
           ),
         ],
       ),
@@ -594,8 +1004,40 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
 
   // Active routine view with animated transitions and progress tracking.
   Widget _buildActiveRoutine(ThemeData theme) {
-    final step = _steps[_currentIndex];
-    final progress = (_currentIndex) / _steps.length;
+    if (_activeSteps.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(28),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'No steps selected',
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            const Text('Add a few actions to your plan before starting your routine.'),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: _openPlanBuilder,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+                foregroundColor: Colors.deepPurple,
+                side: const BorderSide(color: Colors.deepPurple),
+              ),
+              child: const Text('Choose steps'),
+            ),
+          ],
+        ),
+      );
+    }
+    final step = _activeSteps[_currentIndex];
+    final totalSteps = _activeSteps.length;
+    final progress = totalSteps <= 1 ? 0.0 : (_currentIndex) / totalSteps;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -618,7 +1060,7 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
             children: [
               Chip(
                 backgroundColor: Colors.deepPurple.shade50,
-                label: Text('${_currentIndex + 1}/${_steps.length}'),
+                label: Text('${_currentIndex + 1}/$totalSteps'),
               ),
               const SizedBox(width: 12),
               Text(step.type.label, style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -1068,7 +1510,7 @@ class RoutineStep {
   final String description;
   final RoutineStepType type;
 
-  static List<RoutineStep> defaultSteps() {
+  static List<RoutineStep> templates() {
     return const [
       RoutineStep(
         id: 'wake_breathe',
@@ -1112,6 +1554,68 @@ class RoutineStep {
         description: 'Choose a protein-rich breakfast: think Greek yogurt with berries or scrambled eggs with greens.',
         type: RoutineStepType.info,
       ),
+      RoutineStep(
+        id: 'gratitude_journal',
+        title: 'Gratitude Journal',
+        description: 'Write down three things you appreciate right now to anchor your mindset in optimism.',
+        type: RoutineStepType.task,
+      ),
+      RoutineStep(
+        id: 'mobility_flow',
+        title: 'Mobility Flow',
+        description: 'Roll your shoulders, open your chest, and cycle through gentle cat-cow movements for two minutes.',
+        type: RoutineStepType.task,
+      ),
+      RoutineStep(
+        id: 'cold_splash',
+        title: 'Cool Splash Reset',
+        description: 'Splash cool water on your face or hold a chilled cloth to wake up your senses and boost alertness.',
+        type: RoutineStepType.info,
+      ),
+      RoutineStep(
+        id: 'plan_top_three',
+        title: 'Top 3 Priorities',
+        description: 'List the three outcomes that would make today a win and visualise yourself completing them.',
+        type: RoutineStepType.task,
+      ),
+      RoutineStep(
+        id: 'music_vibe',
+        title: 'Soundtrack Spark',
+        description: 'Queue up a short hype playlist or favourite song to infuse movement with fun energy.',
+        type: RoutineStepType.info,
+      ),
+      RoutineStep(
+        id: 'nature_photo',
+        title: 'Nature Glimpse',
+        description: 'Snap or simulate a photo of the morning sky, your plants, or a splash of green to capture the day’s mood.',
+        type: RoutineStepType.photo,
+      ),
+      RoutineStep(
+        id: 'step_outside',
+        title: 'Step Outside',
+        description: 'Step outdoors for sixty seconds. Notice three details around you to ground in the present moment.',
+        type: RoutineStepType.task,
+      ),
+    ];
+  }
+
+  static List<String> defaultSelection() {
+    return const [
+      'wake_breathe',
+      'stretch',
+      'affirmations',
+      'hydration',
+      'sunshine_photo',
+      'mindfulness',
+      'breakfast_tip',
+    ];
+  }
+
+  static List<RoutineStep> defaultSteps() {
+    final library = {for (final step in templates()) step.id: step};
+    return [
+      for (final id in defaultSelection())
+        if (library[id] != null) library[id]!,
     ];
   }
 }
