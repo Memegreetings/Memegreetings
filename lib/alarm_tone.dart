@@ -7,12 +7,14 @@ class AlarmToneOption {
     required this.id,
     required this.label,
     required this.frequency,
+    required this.description,
     this.durationSeconds = 3.0,
   });
 
   final String id;
   final String label;
   final double frequency;
+  final String description;
   final double durationSeconds;
 
   Uint8List? _cachedBytes;
@@ -26,9 +28,24 @@ class AlarmToneOption {
 
 /// List of built-in tone options for the alarm.
 final List<AlarmToneOption> alarmToneOptions = [
-  AlarmToneOption(id: 'classic', label: 'Classic Chime', frequency: 660),
-  AlarmToneOption(id: 'sunrise', label: 'Gentle Sunrise', frequency: 520),
-  AlarmToneOption(id: 'pulse', label: 'Bright Pulse', frequency: 880),
+  AlarmToneOption(
+    id: 'classic',
+    label: 'Classic Chime',
+    frequency: 660,
+    description: 'A familiar bell chime with a gentle swell to ease you awake.',
+  ),
+  AlarmToneOption(
+    id: 'sunrise',
+    label: 'Gentle Sunrise',
+    frequency: 520,
+    description: 'Soft, low notes that gradually bloom like a sunrise.',
+  ),
+  AlarmToneOption(
+    id: 'pulse',
+    label: 'Bright Pulse',
+    frequency: 880,
+    description: 'A bright, energetic pulse to kick-start your morning momentum.',
+  ),
 ];
 
 Uint8List _generateSineWave({
