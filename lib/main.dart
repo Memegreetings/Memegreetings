@@ -137,6 +137,8 @@ class _AlarmTabState extends State<AlarmTab> {
   TimeOfDay? _selectedTime;
   Timer? _alarmTimer;
   final AudioPlayer _player = AudioPlayer();
+  final AudioPlayer _previewPlayer = AudioPlayer();
+  StreamSubscription<void>? _previewCompleteSubscription;
   bool _alarmScheduled = false;
   DateTime? _nextAlarmTime;
   final Set<int> _selectedDays = {DateTime.now().weekday};
@@ -145,6 +147,7 @@ class _AlarmTabState extends State<AlarmTab> {
   final Set<AlarmChallengeType> _selectedChallenges = {AlarmChallengeType.tap};
   final TextEditingController _labelController =
       TextEditingController(text: 'Morning Boost');
+  bool _isPreviewingTone = false;
 
   static const List<String> _weekdayLabels = [
     'Mon',
@@ -157,9 +160,26 @@ class _AlarmTabState extends State<AlarmTab> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _previewPlayer.setReleaseMode(ReleaseMode.stop);
+    _previewCompleteSubscription =
+        _previewPlayer.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() => _isPreviewingTone = false);
+      } else {
+        _isPreviewingTone = false;
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _alarmTimer?.cancel();
     _player.dispose();
+    unawaited(_previewPlayer.stop());
+    _previewCompleteSubscription?.cancel();
+    _previewPlayer.dispose();
     _labelController.dispose();
     super.dispose();
   }
@@ -218,6 +238,34 @@ class _AlarmTabState extends State<AlarmTab> {
     );
   }
 
+  Future<void> _startTonePreview() async {
+    await _previewPlayer.stop();
+    await _previewPlayer.setReleaseMode(ReleaseMode.stop);
+    await _previewPlayer.play(BytesSource(_selectedTone.bytes));
+    if (mounted) {
+      setState(() => _isPreviewingTone = true);
+    } else {
+      _isPreviewingTone = true;
+    }
+  }
+
+  Future<void> _stopTonePreview() async {
+    await _previewPlayer.stop();
+    if (_isPreviewingTone && mounted) {
+      setState(() => _isPreviewingTone = false);
+    } else {
+      _isPreviewingTone = false;
+    }
+  }
+
+  Future<void> _toggleTonePreview() async {
+    if (_isPreviewingTone) {
+      await _stopTonePreview();
+    } else {
+      await _startTonePreview();
+    }
+  }
+
   // Creates a timer to simulate the alarm going off at the selected time.
   void _scheduleAlarm() {
     if (_selectedTime == null) {
@@ -242,6 +290,7 @@ class _AlarmTabState extends State<AlarmTab> {
       return;
     }
 
+    unawaited(_stopTonePreview());
     final now = DateTime.now();
     final scheduled = _findNextAlarmDate(now);
     final delay = scheduled.difference(now);
@@ -268,6 +317,7 @@ class _AlarmTabState extends State<AlarmTab> {
   // Plays the alarm audio and shows a dismiss dialog.
   Future<void> _handleAlarmFire() async {
     await _player.setReleaseMode(ReleaseMode.loop);
+    await _stopTonePreview();
     await _player.play(BytesSource(_selectedTone.bytes));
 
     if (_vibrationEnabled) {
@@ -294,6 +344,7 @@ class _AlarmTabState extends State<AlarmTab> {
   Future<void> _dismissAlarm() async {
     await _player.stop();
     _alarmTimer?.cancel();
+    await _stopTonePreview();
     setState(() {
       _alarmScheduled = false;
       _nextAlarmTime = null;
@@ -325,6 +376,8 @@ class _AlarmTabState extends State<AlarmTab> {
           _buildTimeCard(context),
           const SizedBox(height: 24),
           _buildLabelField(),
+          const SizedBox(height: 24),
+          _buildToneControls(context),
           const SizedBox(height: 24),
           _buildDaySelector(),
           const SizedBox(height: 24),
@@ -406,14 +459,6 @@ class _AlarmTabState extends State<AlarmTab> {
             ],
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _buildToneDropdown(context),
-              _buildVibrationToggle(),
-            ],
-          ),
         ],
       ),
     );
@@ -459,6 +504,7 @@ class _AlarmTabState extends State<AlarmTab> {
               ),
             ),
             textInputAction: TextInputAction.done,
+            textCapitalization: TextCapitalization.words,
           ),
         ],
       ),
@@ -519,6 +565,96 @@ class _AlarmTabState extends State<AlarmTab> {
     );
   }
 
+  Widget _buildToneControls(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 10)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Sound & Feel',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<AlarmToneOption>(
+            value: _selectedTone,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: 'Alarm tone',
+              prefixIcon: const Icon(Icons.music_note),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.2)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(20),
+                borderSide: BorderSide(color: Colors.deepPurple.withOpacity(0.2)),
+              ),
+              focusedBorder: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(20)),
+                borderSide: BorderSide(color: Colors.deepPurple, width: 2),
+              ),
+            ),
+            items: [
+              for (final tone in alarmToneOptions)
+                DropdownMenuItem(
+                  value: tone,
+                  child: Text(tone.label),
+                ),
+            ],
+            onChanged: (tone) {
+              if (tone == null) return;
+              setState(() => _selectedTone = tone);
+              if (_isPreviewingTone) {
+                unawaited(_startTonePreview());
+              }
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _selectedTone.description,
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: Colors.black54),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: () => unawaited(_toggleTonePreview()),
+                  icon: Icon(_isPreviewingTone ? Icons.stop : Icons.play_arrow),
+                  label:
+                      Text(_isPreviewingTone ? 'Stop Preview' : 'Play Preview'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SwitchListTile.adaptive(
+            value: _vibrationEnabled,
+            onChanged: (value) => setState(() => _vibrationEnabled = value),
+            contentPadding: EdgeInsets.zero,
+            activeColor: Colors.deepPurple,
+            title: const Text('Vibration'),
+            subtitle: const Text('Add a gentle buzz alongside the tone.'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChallengeSelector() {
     return Container(
       width: double.infinity,
@@ -547,70 +683,58 @@ class _AlarmTabState extends State<AlarmTab> {
             runSpacing: 12,
             children: AlarmChallengeType.values.map((challenge) {
               final isSelected = _selectedChallenges.contains(challenge);
-              return FilterChip(
-                label: Text(challenge.label),
-                selected: isSelected,
-                onSelected: (value) {
-                  setState(() {
-                    if (value) {
-                      _selectedChallenges.add(challenge);
-                    } else {
-                      _selectedChallenges.remove(challenge);
-                    }
-                  });
-                },
+              return Tooltip(
+                message: challenge.description,
+                child: FilterChip(
+                  avatar: Icon(
+                    challenge.icon,
+                    color: isSelected ? Colors.deepPurple : Colors.grey.shade600,
+                  ),
+                  label: Text(challenge.label),
+                  selected: isSelected,
+                  onSelected: (value) {
+                    setState(() {
+                      if (value) {
+                        _selectedChallenges.add(challenge);
+                      } else {
+                        _selectedChallenges.remove(challenge);
+                      }
+                    });
+                  },
+                  showCheckmark: false,
+                  selectedColor: Colors.deepPurple.shade100,
+                  backgroundColor: Colors.white,
+                  labelStyle: TextStyle(
+                    color: isSelected ? Colors.deepPurple : Colors.black87,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    side: BorderSide(
+                      color: isSelected
+                          ? Colors.deepPurple
+                          : Colors.deepPurple.withOpacity(0.2),
+                    ),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
               );
             }).toList(),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildToneDropdown(BuildContext context) {
-    return DropdownButtonHideUnderline(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.deepPurple.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: DropdownButton<AlarmToneOption>(
-          value: _selectedTone,
-          icon: const Icon(Icons.arrow_drop_down),
-          onChanged: (tone) {
-            if (tone == null) return;
-            setState(() => _selectedTone = tone);
-          },
-          items: [
-            for (final tone in alarmToneOptions)
-              DropdownMenuItem(
-                value: tone,
-                child: Text(tone.label),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVibrationToggle() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.deepPurple.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.vibration, color: Colors.deepPurple),
-          const SizedBox(width: 8),
-          const Text('Vibration'),
-          Switch(
-            value: _vibrationEnabled,
-            onChanged: (value) => setState(() => _vibrationEnabled = value),
-            activeColor: Colors.deepPurple,
+          const SizedBox(height: 12),
+          Text(
+            _selectedChallenges.isEmpty
+                ? 'No challenges selected yet.'
+                : 'Selected: ' +
+                    AlarmChallengeType.values
+                        .where(_selectedChallenges.contains)
+                        .map((c) => c.label)
+                        .join(', '),
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: Colors.black54),
           ),
         ],
       ),
@@ -657,6 +781,12 @@ class _AlarmTabState extends State<AlarmTab> {
         '${next.year}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
     final weekdayLabel = _weekdayLabels[next.weekday - 1];
     final label = _labelController.text.trim();
+    final challengeSummary = _selectedChallenges.isEmpty
+        ? 'None selected'
+        : AlarmChallengeType.values
+            .where(_selectedChallenges.contains)
+            .map((c) => c.label)
+            .join(', ');
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -690,6 +820,16 @@ class _AlarmTabState extends State<AlarmTab> {
           Text(
             '$weekdayLabel • $formattedDate • $time',
             style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Tone: ${_selectedTone.label}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Challenges: $challengeSummary',
+            style: const TextStyle(color: Colors.white70),
           ),
           const SizedBox(height: 8),
           const Text(
