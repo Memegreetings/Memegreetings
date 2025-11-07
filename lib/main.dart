@@ -23,14 +23,27 @@ Future<void> main() async {
   final storage = await FeedStorage.create();
   final feedController = FeedController(storage);
   await feedController.load();
-  runApp(MorningRoutineApp(feedController: feedController));
+  final profileStorage = await ProfileStorage.create();
+  final profileController = ProfileController(profileStorage);
+  await profileController.load();
+  runApp(
+    MorningRoutineApp(
+      feedController: feedController,
+      profileController: profileController,
+    ),
+  );
 }
 
 // Root widget that defines the global theme and injects the shared FeedController.
 class MorningRoutineApp extends StatelessWidget {
-  const MorningRoutineApp({super.key, required this.feedController});
+  const MorningRoutineApp({
+    super.key,
+    required this.feedController,
+    required this.profileController,
+  });
 
   final FeedController feedController;
+  final ProfileController profileController;
 
   @override
   Widget build(BuildContext context) {
@@ -49,16 +62,24 @@ class MorningRoutineApp extends StatelessWidget {
           bodyMedium: TextStyle(fontFamily: 'Roboto', fontSize: 14),
         ),
       ),
-      home: HomePage(feedController: feedController),
+      home: HomePage(
+        feedController: feedController,
+        profileController: profileController,
+      ),
     );
   }
 }
 
 // The landing page holding the bottom navigation tabs for the four app sections.
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.feedController});
+  const HomePage({
+    super.key,
+    required this.feedController,
+    required this.profileController,
+  });
 
   final FeedController feedController;
+  final ProfileController profileController;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -67,6 +88,26 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   final GlobalKey<MorningRoutineTabState> _routineKey = GlobalKey();
+  final GlobalKey<_AlarmTabState> _alarmKey = GlobalKey();
+  bool _isOnboarding = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.profileController.addListener(_handleProfileChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.profileController.removeListener(_handleProfileChanged);
+    super.dispose();
+  }
+
+  void _handleProfileChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
 
   // Triggered when the alarm is dismissed. Navigates to the routine and starts it.
   void _handleAlarmDismissed(List<String> tasks) {
@@ -74,49 +115,170 @@ class _HomePageState extends State<HomePage> {
     _routineKey.currentState?.startRoutine(fromAlarm: true, taskIds: tasks);
   }
 
+  Future<void> _openProfileOnboarding() async {
+    if (_isOnboarding) {
+      return;
+    }
+    setState(() => _isOnboarding = true);
+    final result = await Navigator.of(context).push<ProfileOnboardingResult>(
+      MaterialPageRoute(
+        builder: (context) => const ProfileOnboardingScreen(),
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _isOnboarding = false);
+    if (result != null) {
+      await widget.profileController.saveProfile(result.profile);
+      final prefs = await AlarmPreferences.create();
+      await prefs.saveAlarm(result.alarm);
+      final alarmState = _alarmKey.currentState;
+      if (alarmState != null) {
+        await alarmState.refreshFromPreferences();
+      }
+      final timeLabel = result.profile.wakeTime.format(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Profile ready! Alarm set for $timeLabel.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasProfile = widget.profileController.profile != null;
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFB388FF), Color(0xFFEDE7F6)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      body: Stack(
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFB388FF), Color(0xFFEDE7F6)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: SafeArea(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: [
+                  AlarmTab(
+                    key: _alarmKey,
+                    onAlarmDismissed: _handleAlarmDismissed,
+                  ),
+                  MorningRoutineTab(
+                    key: _routineKey,
+                    feedController: widget.feedController,
+                  ),
+                  FeedTab(feedController: widget.feedController),
+                  ProfileTab(
+                    profileController: widget.profileController,
+                    onEditProfile: _openProfileOnboarding,
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: IndexedStack(
-            index: _currentIndex,
-            children: [
-              AlarmTab(onAlarmDismissed: _handleAlarmDismissed),
-              MorningRoutineTab(key: _routineKey, feedController: widget.feedController),
-              FeedTab(feedController: widget.feedController),
-              const ProfileTab(),
-            ],
-          ),
-        ),
+          if (!hasProfile && !_isOnboarding)
+            Positioned.fill(
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xAA311B92), Color(0xAA9575CD)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 24,
+                            offset: Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.auto_awesome, size: 64, color: Colors.deepPurple),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Create your profile to begin',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.deepPurple.shade700,
+                                ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'I\'ll learn your name, schedule and morning rituals, then craft alarms and routines that fit your vibe.',
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _openProfileOnboarding,
+                              icon: const Icon(Icons.chat_bubble_outline),
+                              label: const Text('Create Profile'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.deepPurple,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size.fromHeight(52),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.9),
-          boxShadow: const [
-            BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, -2)),
-          ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
-          selectedItemColor: Colors.deepPurple,
-          unselectedItemColor: Colors.grey.shade500,
-          showUnselectedLabels: true,
-          type: BottomNavigationBarType.fixed,
-          items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.alarm), label: 'Alarms'),
-            BottomNavigationBarItem(icon: Icon(Icons.sunny), label: 'Routine'),
-            BottomNavigationBarItem(icon: Icon(Icons.auto_awesome), label: 'Feed'),
-            BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-          ],
+      bottomNavigationBar: IgnorePointer(
+        ignoring: !hasProfile,
+        child: Opacity(
+          opacity: hasProfile ? 1 : 0.5,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.9),
+              boxShadow: const [
+                BoxShadow(color: Colors.black12, blurRadius: 12, offset: Offset(0, -2)),
+              ],
+            ),
+            child: BottomNavigationBar(
+              currentIndex: _currentIndex,
+              onTap: (index) {
+                if (!hasProfile) {
+                  return;
+                }
+                setState(() => _currentIndex = index);
+              },
+              selectedItemColor: Colors.deepPurple,
+              unselectedItemColor: Colors.grey.shade500,
+              showUnselectedLabels: true,
+              type: BottomNavigationBarType.fixed,
+              items: const [
+                BottomNavigationBarItem(icon: Icon(Icons.alarm), label: 'Alarms'),
+                BottomNavigationBarItem(icon: Icon(Icons.sunny), label: 'Routine'),
+                BottomNavigationBarItem(icon: Icon(Icons.auto_awesome), label: 'Feed'),
+                BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -265,6 +427,10 @@ class _AlarmTabState extends State<AlarmTab> {
         _savedMorningTasks = List.of(saved.morningTasks);
       });
     }
+  }
+
+  Future<void> refreshFromPreferences() async {
+    await _loadSavedAlarm();
   }
 
   AlarmChallengeType? _challengeFromId(String id) {
@@ -1954,38 +2120,783 @@ class FeedTab extends StatelessWidget {
 
 // Simple placeholder tab for the upcoming profile features.
 class ProfileTab extends StatelessWidget {
-  const ProfileTab({super.key});
+  const ProfileTab({
+    super.key,
+    required this.profileController,
+    required this.onEditProfile,
+  });
+
+  final ProfileController profileController;
+  final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: profileController,
+      builder: (context, _) {
+        final profile = profileController.profile;
+        if (profile == null) {
+          return _buildEmptyState(context);
+        }
+
+        final theme = Theme.of(context);
+        final tasks = profile.routineTaskIds
+            .map(_findTaskOption)
+            .whereType<MorningTaskOption>()
+            .toList();
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(28),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.95),
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black12,
+                          blurRadius: 18,
+                          offset: Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const CircleAvatar(
+                              radius: 32,
+                              backgroundColor: Color(0xFFEDE7F6),
+                              child: Icon(Icons.wb_sunny_outlined, color: Colors.deepPurple, size: 32),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Good morning, ${profile.name}!',
+                                    style: theme.textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.deepPurple.shade700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Routine crafted on ${_formatDate(profile.createdAt)}',
+                                    style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        _buildInfoRow('Age', '${profile.age} years'),
+                        if (profile.occupation.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          _buildInfoRow('Daytime focus', profile.occupation),
+                        ],
+                        const SizedBox(height: 16),
+                        _buildInfoRow(
+                          'Wake-up time',
+                          profile.wakeTime.format(context),
+                        ),
+                        const SizedBox(height: 16),
+                        _buildInfoRow('Morning vibe', profile.morningSummary),
+                        const SizedBox(height: 24),
+                        Text(
+                          'Morning routine steps',
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 12),
+                        if (tasks.isEmpty)
+                          Text(
+                            'We\'ll run the default glow-up routine until you add more rituals.',
+                            style: theme.textTheme.bodyMedium,
+                          )
+                        else
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              for (final task in tasks)
+                                Chip(
+                                  label: Text('${task.emoji} ${task.title}'),
+                                  backgroundColor: Colors.deepPurple.shade50,
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: onEditProfile,
+                    icon: const Icon(Icons.edit),
+                    label: const Text('Update Profile'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepPurple,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(52),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context) {
     return Center(
-      child: Container(
-        padding: const EdgeInsets.all(32),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.95),
-          borderRadius: BorderRadius.circular(28),
-          boxShadow: const [
-            BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 10)),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.person_outline, size: 64, color: Colors.deepPurple),
-            SizedBox(height: 16),
-            Text(
-              'Profile',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Container(
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.95),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: const [
+                BoxShadow(color: Colors.black12, blurRadius: 18, offset: Offset(0, 10)),
+              ],
             ),
-            SizedBox(height: 8),
-            Text(
-              'Coming soon: streaks, achievements, and deeper personalisation!',
-              textAlign: TextAlign.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.person_outline, size: 64, color: Colors.deepPurple),
+                const SizedBox(height: 16),
+                Text(
+                  'No profile yet',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Start by creating your profile so Lumi can schedule the perfect wake up and routine for you.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: onEditProfile,
+                  icon: const Icon(Icons.chat_bubble_outline),
+                  label: const Text('Create Profile'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  MorningTaskOption? _findTaskOption(String id) {
+    for (final option in morningTaskOptions) {
+      if (option.id == id) {
+        return option;
+      }
+    }
+    return null;
+  }
+
+  static Widget _buildInfoRow(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.deepPurple),
+        ),
+        const SizedBox(height: 6),
+        Text(value),
+      ],
+    );
+  }
+
+  static String _formatDate(DateTime date) {
+    final local = date.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
+  }
+}
+
+
+class ProfileOnboardingResult {
+  ProfileOnboardingResult({required this.profile, required this.alarm});
+
+  final UserProfile profile;
+  final ScheduledAlarm alarm;
+}
+
+class ProfileOnboardingScreen extends StatefulWidget {
+  const ProfileOnboardingScreen({super.key});
+
+  @override
+  State<ProfileOnboardingScreen> createState() => _ProfileOnboardingScreenState();
+}
+
+class _ProfileOnboardingScreenState extends State<ProfileOnboardingScreen> {
+  final List<_ChatMessage> _messages = [];
+  late final List<_OnboardingStep> _steps = _buildSteps();
+  final Map<String, String> _answers = {};
+  final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  int _currentStepIndex = 0;
+  bool _isProcessing = false;
+  bool _isComplete = false;
+  ProfileOnboardingResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _messages.add(
+      const _ChatMessage(
+        sender: MessageSender.bot,
+        text: "Hey there! I’m Lumi, your AI morning co-pilot. Let’s design mornings that feel amazing.",
+      ),
+    );
+    _messages.add(
+      _ChatMessage(
+        sender: MessageSender.bot,
+        text: _steps.first.prompt,
+      ),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _sendAnswer() {
+    if (_isProcessing || _isComplete) {
+      return;
+    }
+    final rawText = _controller.text.trim();
+    if (rawText.isEmpty) {
+      return;
+    }
+
+    final step = _steps[_currentStepIndex];
+    setState(() {
+      _messages.add(_ChatMessage(sender: MessageSender.user, text: rawText));
+      _controller.clear();
+    });
+    _scrollToBottom();
+
+    final error = step.validate(rawText);
+    if (error != null) {
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (!mounted) return;
+        _addBotMessage(error);
+      });
+      return;
+    }
+
+    final value = step.normalise(rawText);
+    _answers[step.id] = value;
+
+    if (_currentStepIndex + 1 < _steps.length) {
+      setState(() => _isProcessing = true);
+      Future.delayed(const Duration(milliseconds: 550), () {
+        if (!mounted) return;
+        setState(() {
+          _currentStepIndex += 1;
+          _messages.add(_ChatMessage(sender: MessageSender.bot, text: _steps[_currentStepIndex].prompt));
+          _isProcessing = false;
+        });
+        _scrollToBottom();
+      });
+    } else {
+      setState(() => _isProcessing = true);
+      Future.delayed(const Duration(milliseconds: 480), () async {
+        if (!mounted) return;
+        await _completeOnboarding();
+      });
+    }
+  }
+
+  void _addBotMessage(String text) {
+    setState(() {
+      _messages.add(_ChatMessage(sender: MessageSender.bot, text: text));
+      _isProcessing = false;
+    });
+    _scrollToBottom();
+  }
+
+  Future<void> _completeOnboarding() async {
+    FocusScope.of(context).unfocus();
+    final result = _buildResult();
+    if (result == null) {
+      _addBotMessage("Hmm, I lost the thread there. Could you try that again?");
+      return;
+    }
+    final timeLabel = result.profile.wakeTime.format(context);
+    setState(() {
+      _isProcessing = false;
+      _isComplete = true;
+      _result = result;
+    });
+    _addBotMessage("Amazing! Your wake-up call is locked for $timeLabel and your routine is tailored to your vibe.");
+    _addBotMessage("Tap “Finish Setup” to save everything.");
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Create Profile'),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: Container(
+              color: const Color(0xFFF4ECFF),
+              child: ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                itemCount: _messages.length,
+                itemBuilder: (context, index) {
+                  final message = _messages[index];
+                  final isBot = message.sender == MessageSender.bot;
+                  return Align(
+                    alignment: isBot ? Alignment.centerLeft : Alignment.centerRight,
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      decoration: BoxDecoration(
+                        color: isBot ? Colors.white : Colors.deepPurple,
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(20),
+                          topRight: const Radius.circular(20),
+                          bottomLeft: Radius.circular(isBot ? 4 : 20),
+                          bottomRight: Radius.circular(isBot ? 20 : 4),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        message.text,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: isBot ? Colors.deepPurple.shade700 : Colors.white,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          if (_isComplete && _result != null)
+            _buildCompletionActions()
+          else
+            _buildInputBar(theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompletionActions() {
+    final result = _result;
+    if (result == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+      child: ElevatedButton.icon(
+        onPressed: () => Navigator.of(context).pop(result),
+        icon: const Icon(Icons.rocket_launch),
+        label: const Text('Finish Setup'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.deepPurple,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputBar(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              enabled: !_isProcessing,
+              onSubmitted: (_) => _sendAnswer(),
+              decoration: InputDecoration(
+                labelText: 'Type your reply…',
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: _isProcessing ? null : _sendAnswer,
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+              minimumSize: const Size(56, 56),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            ),
+            child: _isProcessing
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.send),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<_OnboardingStep> _buildSteps() {
+    return [
+      _OnboardingStep(
+        id: 'name',
+        prompt: 'First up, what should I call you?',
+        validator: (value) => value.trim().isEmpty
+            ? "I didn't catch your name. What should I call you?"
+            : null,
+        normaliser: _formatName,
+      ),
+      _OnboardingStep(
+        id: 'age',
+        prompt: 'Great! And how many years of awesome experience do you have?',
+        validator: (value) {
+          final trimmed = value.trim();
+          final age = int.tryParse(trimmed);
+          if (age == null) {
+            return 'Could you give me your age as a number?';
+          }
+          if (age < 5 || age > 120) {
+            return "That doesn't sound right. What's your actual age?";
+          }
+          return null;
+        },
+        normaliser: (value) => int.parse(value.trim()).toString(),
+      ),
+      _OnboardingStep(
+        id: 'occupation',
+        prompt: 'What do you spend most of your day doing? Work, study, parenting, something else?',
+        validator: (value) => value.trim().isEmpty
+            ? 'Tell me a little about your day so I can plan a morning that supports it.'
+            : null,
+        normaliser: _sentenceCase,
+      ),
+      _OnboardingStep(
+        id: 'wake_time',
+        prompt: 'What time do you need to wake up? (Try 6:30 AM or 07:00)',
+        validator: (value) => _parseTimeOfDay(value) == null
+            ? 'Let me know a specific time like 6:45 AM.'
+            : null,
+        normaliser: (value) => value.trim(),
+      ),
+      _OnboardingStep(
+        id: 'habits',
+        prompt: 'Paint me a picture of your must-do morning moves. Coffee, journaling, workouts?',
+        validator: (value) => value.trim().isEmpty
+            ? 'Share at least one thing you love to do in the morning.'
+            : null,
+        normaliser: _sentenceCase,
+      ),
+    ];
+  }
+
+  ProfileOnboardingResult? _buildResult() {
+    final name = _answers['name'] ?? '';
+    final age = int.tryParse(_answers['age'] ?? '');
+    final occupation = _answers['occupation'] ?? '';
+    final wakeInput = _answers['wake_time'] ?? '';
+    final habits = (_answers['habits'] ?? '').trim();
+    final wakeTime = _parseTimeOfDay(wakeInput);
+
+    if (name.isEmpty || age == null || wakeTime == null) {
+      return null;
+    }
+
+    final taskIds = _inferTasks(habits);
+    final profile = UserProfile(
+      name: name,
+      age: age,
+      occupation: occupation,
+      wakeHour: wakeTime.hour,
+      wakeMinute: wakeTime.minute,
+      morningSummary: habits.isEmpty ? 'Keeping it flexible this morning.' : habits,
+      routineTaskIds: taskIds,
+      createdAt: DateTime.now(),
+    );
+
+    final alarm = ScheduledAlarm(
+      hour: wakeTime.hour,
+      minute: wakeTime.minute,
+      days: List<int>.generate(7, (index) => index + 1),
+      toneId: alarmToneOptions.first.id,
+      challengeIds: const [AlarmChallengeType.tap.name],
+      morningTasks: taskIds,
+    );
+
+    return ProfileOnboardingResult(profile: profile, alarm: alarm);
+  }
+
+  TimeOfDay? _parseTimeOfDay(String input) {
+    final text = input.trim().toLowerCase();
+    final match = RegExp(r'^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$').firstMatch(text);
+    if (match == null) {
+      return null;
+    }
+    var hour = int.tryParse(match.group(1) ?? '');
+    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+    if (hour == null) {
+      return null;
+    }
+    final period = match.group(3);
+    if (period != null) {
+      if (hour == 12) {
+        hour = period == 'am' ? 0 : 12;
+      } else if (period == 'pm') {
+        hour += 12;
+      }
+    }
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return null;
+    }
+    return TimeOfDay(hour: hour, minute: minute);
+  }
+
+  List<String> _inferTasks(String description) {
+    final lower = description.toLowerCase();
+    final Map<String, List<String>> keywordMap = {
+      'meditate': ['meditat', 'breathe', 'calm', 'mindful'],
+      'hydrate': ['water', 'hydrate', 'drink'],
+      'make_bed': ['bed', 'tidy', 'make the bed'],
+      'stretch': ['stretch', 'yoga', 'workout', 'exercise', 'run'],
+      'make_drink': ['coffee', 'tea', 'brew', 'latte'],
+      'breakfast': ['breakfast', 'meal', 'eat', 'smoothie'],
+      'journal': ['journal', 'write', 'gratitude', 'notes'],
+      'mirror_love': ['affirm', 'mirror', 'self love'],
+      'selfie': ['selfie', 'photo', 'picture'],
+      'playlist': ['music', 'playlist', 'song', 'tune'],
+      'brush_teeth': ['brush', 'teeth', 'tooth'],
+    };
+
+    final matches = <String>{};
+    keywordMap.forEach((id, keywords) {
+      if (keywords.any((keyword) => lower.contains(keyword))) {
+        matches.add(id);
+      }
+    });
+
+    if (matches.isEmpty) {
+      matches.addAll(morningTaskOptions.take(3).map((option) => option.id));
+    }
+    return matches.take(5).toList();
+  }
+
+  String _formatName(String value) {
+    final parts = value.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) {
+      return '';
+    }
+    return parts
+        .map((part) => part[0].toUpperCase() + part.substring(1).toLowerCase())
+        .join(' ');
+  }
+
+  String _sentenceCase(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    final lower = trimmed.toLowerCase();
+    return lower[0].toUpperCase() + lower.substring(1);
+  }
+}
+
+enum MessageSender { bot, user }
+
+class _ChatMessage {
+  const _ChatMessage({required this.sender, required this.text});
+
+  final MessageSender sender;
+  final String text;
+}
+
+class _OnboardingStep {
+  const _OnboardingStep({
+    required this.id,
+    required this.prompt,
+    this.validator,
+    this.normaliser,
+  });
+
+  final String id;
+  final String prompt;
+  final String? Function(String value)? validator;
+  final String Function(String value)? normaliser;
+
+  String? validate(String value) => validator?.call(value.trim());
+
+  String normalise(String value) => normaliser != null ? normaliser!(value.trim()) : value.trim();
+}
+
+class UserProfile {
+  UserProfile({
+    required this.name,
+    required this.age,
+    required this.occupation,
+    required this.wakeHour,
+    required this.wakeMinute,
+    required this.morningSummary,
+    required this.routineTaskIds,
+    required this.createdAt,
+  });
+
+  final String name;
+  final int age;
+  final String occupation;
+  final int wakeHour;
+  final int wakeMinute;
+  final String morningSummary;
+  final List<String> routineTaskIds;
+  final DateTime createdAt;
+
+  TimeOfDay get wakeTime => TimeOfDay(hour: wakeHour, minute: wakeMinute);
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'age': age,
+        'occupation': occupation,
+        'wakeHour': wakeHour,
+        'wakeMinute': wakeMinute,
+        'morningSummary': morningSummary,
+        'routineTaskIds': routineTaskIds,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory UserProfile.fromJson(Map<String, dynamic> json) {
+    final routine = (json['routineTaskIds'] as List<dynamic>? ?? [])
+        .map((value) => value.toString())
+        .toList();
+    return UserProfile(
+      name: (json['name'] as String? ?? '').trim(),
+      age: json['age'] as int? ?? int.tryParse(json['age']?.toString() ?? '') ?? 18,
+      occupation: (json['occupation'] as String? ?? '').trim(),
+      wakeHour: json['wakeHour'] as int? ?? 7,
+      wakeMinute: json['wakeMinute'] as int? ?? 0,
+      morningSummary: (json['morningSummary'] as String? ?? '').trim(),
+      routineTaskIds: routine,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+    );
+  }
+}
+
+class ProfileStorage {
+  ProfileStorage._(this._preferences);
+
+  static const _key = 'user_profile';
+  final SharedPreferences _preferences;
+
+  static Future<ProfileStorage> create() async {
+    final prefs = await SharedPreferences.getInstance();
+    return ProfileStorage._(prefs);
+  }
+
+  Future<UserProfile?> loadProfile() async {
+    final jsonString = _preferences.getString(_key);
+    if (jsonString == null || jsonString.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(jsonString);
+      if (decoded is Map<String, dynamic>) {
+        return UserProfile.fromJson(decoded);
+      }
+      if (decoded is Map) {
+        return UserProfile.fromJson(Map<String, dynamic>.from(decoded as Map));
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveProfile(UserProfile profile) async {
+    final encoded = jsonEncode(profile.toJson());
+    await _preferences.setString(_key, encoded);
+  }
+}
+
+class ProfileController extends ChangeNotifier {
+  ProfileController(this._storage);
+
+  final ProfileStorage _storage;
+  UserProfile? _profile;
+
+  UserProfile? get profile => _profile;
+
+  Future<void> load() async {
+    _profile = await _storage.loadProfile();
+    notifyListeners();
+  }
+
+  Future<void> saveProfile(UserProfile profile) async {
+    _profile = profile;
+    await _storage.saveProfile(profile);
+    notifyListeners();
   }
 }
 
