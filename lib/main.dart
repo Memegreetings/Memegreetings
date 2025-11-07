@@ -1357,19 +1357,66 @@ class MorningRoutineTab extends StatefulWidget {
 
 class MorningRoutineTabState extends State<MorningRoutineTab> {
   List<RoutineStep> _steps = RoutineStep.defaultSteps();
+  List<String> _savedTaskIds = const [];
   bool _isRunning = false;
   bool _isCompleted = false;
   int _currentIndex = 0;
   Uint8List? _pendingPhotoBytes;
   RoutineEntry? _pendingEntry;
   final List<RoutineStepResult> _results = [];
+  AlarmPreferences? _alarmPreferences;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSavedRoutine());
+  }
+
+  Future<void> _loadSavedRoutine() async {
+    final prefs = await _ensureAlarmPreferences();
+    final saved = await prefs.loadAlarm();
+    if (!mounted) return;
+    final tasks = saved?.morningTasks ?? const <String>[];
+    setState(() {
+      _savedTaskIds = List<String>.from(tasks);
+      if (!_isRunning) {
+        _steps = RoutineStep.fromTaskIds(_savedTaskIds);
+      }
+    });
+  }
+
+  Future<AlarmPreferences> _ensureAlarmPreferences() async {
+    final existing = _alarmPreferences;
+    if (existing != null) {
+      return existing;
+    }
+    final prefs = await AlarmPreferences.create();
+    _alarmPreferences = prefs;
+    return prefs;
+  }
 
   // Public method invoked when the alarm dismisses to reset and begin automatically.
   void startRoutine({bool fromAlarm = false, List<String>? taskIds}) {
-    final nextSteps =
-        (taskIds != null && taskIds.isNotEmpty) ? RoutineStep.fromTaskIds(taskIds) : RoutineStep.defaultSteps();
+    if (taskIds != null && taskIds.isNotEmpty) {
+      _launchRoutine(taskIds, fromAlarm: fromAlarm);
+      return;
+    }
+
+    _ensureAlarmPreferences()
+        .then((prefs) => prefs.loadAlarm())
+        .then((saved) {
+      if (!mounted) return;
+      final tasks = saved?.morningTasks ?? const <String>[];
+      _launchRoutine(tasks, fromAlarm: fromAlarm);
+    });
+  }
+
+  void _launchRoutine(List<String> rawTaskIds, {required bool fromAlarm}) {
+    final taskIds = List<String>.from(rawTaskIds);
+    final nextSteps = RoutineStep.fromTaskIds(taskIds);
     setState(() {
       _steps = nextSteps;
+      _savedTaskIds = taskIds;
       _isRunning = true;
       _isCompleted = false;
       _currentIndex = 0;
