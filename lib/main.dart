@@ -69,9 +69,9 @@ class _HomePageState extends State<HomePage> {
   final GlobalKey<MorningRoutineTabState> _routineKey = GlobalKey();
 
   // Triggered when the alarm is dismissed. Navigates to the routine and starts it.
-  void _handleAlarmDismissed() {
+  void _handleAlarmDismissed(List<String> tasks) {
     setState(() => _currentIndex = 1);
-    _routineKey.currentState?.startRoutine(fromAlarm: true);
+    _routineKey.currentState?.startRoutine(fromAlarm: true, taskIds: tasks);
   }
 
   @override
@@ -127,7 +127,7 @@ class _HomePageState extends State<HomePage> {
 class AlarmTab extends StatefulWidget {
   const AlarmTab({super.key, required this.onAlarmDismissed});
 
-  final VoidCallback onAlarmDismissed;
+  final void Function(List<String> tasks) onAlarmDismissed;
 
   @override
   State<AlarmTab> createState() => _AlarmTabState();
@@ -143,6 +143,8 @@ class _AlarmTabState extends State<AlarmTab> {
   AlarmToneOption _selectedTone = alarmToneOptions.first;
   bool _vibrationEnabled = true;
   final Set<AlarmChallengeType> _selectedChallenges = {AlarmChallengeType.tap};
+  AlarmPreferences? _alarmPreferences;
+  List<String> _savedMorningTasks = [];
 
   static const List<String> _weekdayLabels = [
     'Mon',
@@ -153,6 +155,12 @@ class _AlarmTabState extends State<AlarmTab> {
     'Sat',
     'Sun',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSavedAlarm());
+  }
 
   @override
   void dispose() {
@@ -215,8 +223,135 @@ class _AlarmTabState extends State<AlarmTab> {
     );
   }
 
+  Future<AlarmPreferences> _ensurePreferences() async {
+    final existing = _alarmPreferences;
+    if (existing != null) {
+      return existing;
+    }
+    final prefs = await AlarmPreferences.create();
+    _alarmPreferences = prefs;
+    return prefs;
+  }
+
+  Future<void> _loadSavedAlarm() async {
+    final prefs = await _ensurePreferences();
+    final saved = await prefs.loadAlarm();
+    if (!mounted || saved == null) {
+      return;
+    }
+
+    final tone = alarmToneOptions.firstWhere(
+      (option) => option.id == saved.toneId,
+      orElse: () => alarmToneOptions.first,
+    );
+
+    final challenges = saved.challengeIds
+        .map(_challengeFromId)
+        .whereType<AlarmChallengeType>()
+        .toSet();
+
+    if (mounted) {
+      setState(() {
+        _selectedTime = TimeOfDay(hour: saved.hour, minute: saved.minute);
+        if (saved.days.isNotEmpty) {
+          _selectedDays
+            ..clear()
+            ..addAll(saved.days);
+        }
+        _selectedTone = tone;
+        _selectedChallenges
+          ..clear()
+          ..addAll(challenges.isEmpty ? {AlarmChallengeType.tap} : challenges);
+        _savedMorningTasks = List.of(saved.morningTasks);
+      });
+    }
+  }
+
+  AlarmChallengeType? _challengeFromId(String id) {
+    try {
+      return AlarmChallengeType.values.firstWhere((value) => value.name == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ScheduledAlarm _buildCurrentAlarmConfiguration({List<String>? morningTasks}) {
+    final time = _selectedTime ?? TimeOfDay.now();
+    final selectedDays = _selectedDays.isEmpty
+        ? {DateTime.now().weekday}
+        : _selectedDays;
+    final challenges = _selectedChallenges.isEmpty
+        ? {AlarmChallengeType.tap}
+        : _selectedChallenges;
+    return ScheduledAlarm(
+      hour: time.hour,
+      minute: time.minute,
+      days: selectedDays.toList()..sort(),
+      toneId: _selectedTone.id,
+      challengeIds: challenges.map((type) => type.name).toList(),
+      morningTasks: List<String>.from(morningTasks ?? _savedMorningTasks),
+    );
+  }
+
+  Future<void> _saveAlarmConfiguration({List<String>? morningTasks}) async {
+    final prefs = await _ensurePreferences();
+    final config = _buildCurrentAlarmConfiguration(morningTasks: morningTasks);
+    await prefs.saveAlarm(config);
+  }
+
+  Future<void> _promptMorningRoutineSetup() async {
+    if (!mounted) return;
+    final shouldSetup = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Morning Routine'),
+        content: const Text('Would you like to set up your Morning Routine now?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Maybe Later'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Set Up Now'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldSetup == true && mounted) {
+      await _openMorningRoutineSetup();
+    }
+  }
+
+  Future<void> _openMorningRoutineSetup() async {
+    final selections = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(
+        builder: (context) => MorningRoutineSetupScreen(
+          initialSelection: _savedMorningTasks,
+        ),
+      ),
+    );
+
+    if (selections != null && mounted) {
+      setState(() {
+        _savedMorningTasks = List.of(selections);
+      });
+      await _saveAlarmConfiguration(morningTasks: selections);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Morning routine saved for this alarm.')),
+      );
+    }
+  }
+
   // Creates a timer to simulate the alarm going off at the selected time.
-  void _scheduleAlarm() {
+  Future<void> _scheduleAlarm() async {
     if (_selectedTime == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pick a time before setting the alarm.')),
@@ -253,6 +388,9 @@ class _AlarmTabState extends State<AlarmTab> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Alarm set for $label at $timeLabel.')),
     );
+
+    await _saveAlarmConfiguration();
+    await _promptMorningRoutineSetup();
   }
 
   // Plays the alarm audio and shows a dismiss dialog.
@@ -287,7 +425,10 @@ class _AlarmTabState extends State<AlarmTab> {
       _alarmScheduled = false;
       _nextAlarmTime = null;
     });
-    widget.onAlarmDismissed();
+    final prefs = await _ensurePreferences();
+    final saved = await prefs.loadAlarm();
+    final tasks = saved?.morningTasks ?? _savedMorningTasks;
+    widget.onAlarmDismissed(List<String>.from(tasks));
   }
 
   @override
@@ -630,6 +771,212 @@ class _AlarmTabState extends State<AlarmTab> {
     );
   }
 }
+
+class MorningRoutineSetupScreen extends StatefulWidget {
+  const MorningRoutineSetupScreen({super.key, required this.initialSelection});
+
+  final List<String> initialSelection;
+
+  @override
+  State<MorningRoutineSetupScreen> createState() => _MorningRoutineSetupScreenState();
+}
+
+class _MorningRoutineSetupScreenState extends State<MorningRoutineSetupScreen> {
+  late Set<String> _selection;
+
+  @override
+  void initState() {
+    super.initState();
+    _selection = widget.initialSelection.toSet();
+  }
+
+  void _toggleSelection(String id, bool isSelected) {
+    setState(() {
+      if (isSelected) {
+        _selection.add(id);
+      } else {
+        _selection.remove(id);
+      }
+    });
+  }
+
+  void _save() {
+    Navigator.of(context).pop(List<String>.from(_selection));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Morning Routine Builder'),
+        foregroundColor: Colors.deepPurple,
+        backgroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text(
+            'Choose the habits that make your mornings shine. We’ll launch them as soon as your alarm is dismissed.',
+            style: theme.textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 16),
+          ...morningTaskOptions.map((option) {
+            final isSelected = _selection.contains(option.id);
+            return Card(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              child: CheckboxListTile(
+                value: isSelected,
+                onChanged: (value) => _toggleSelection(option.id, value ?? false),
+                title: Text('${option.emoji} ${option.title}'),
+                subtitle: Text(option.description),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            );
+          }),
+          if (_selection.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'No tasks selected. The default routine will run until you add your own steps.',
+                style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+              ),
+            ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ElevatedButton(
+            onPressed: _save,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(52),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            ),
+            child: const Text('Save Routine'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class MorningTaskOption {
+  const MorningTaskOption({
+    required this.id,
+    required this.emoji,
+    required this.title,
+    required this.description,
+    required this.type,
+  });
+
+  final String id;
+  final String emoji;
+  final String title;
+  final String description;
+  final RoutineStepType type;
+
+  RoutineStep toRoutineStep() {
+    return RoutineStep(
+      id: id,
+      title: '$emoji $title',
+      description: description,
+      type: type,
+    );
+  }
+}
+
+const List<MorningTaskOption> morningTaskOptions = [
+  MorningTaskOption(
+    id: 'meditate',
+    emoji: '🧘',
+    title: 'Meditate for 10 minutes',
+    description: 'Find a calm space, close your eyes, and follow your breath for ten mindful minutes.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'hydrate',
+    emoji: '💧',
+    title: 'Drink a glass of water',
+    description: 'Hydrate right away to wake up your metabolism and refresh your body.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'make_bed',
+    emoji: '🛏️',
+    title: 'Make the bed',
+    description: 'Smooth the sheets, fluff the pillows, and start your day with a quick win.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'brush_teeth',
+    emoji: '🦷',
+    title: 'Brush teeth',
+    description: 'Give your smile a fresh start before you dive into the rest of your routine.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'stretch',
+    emoji: '🤸',
+    title: 'Stretch or light exercise',
+    description: 'Wake up your muscles with gentle stretches or a quick flow to boost circulation.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'make_drink',
+    emoji: '☕',
+    title: 'Make tea or coffee',
+    description: 'Brew your favourite cup and savour the aroma while you plan the day.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'breakfast',
+    emoji: '🍳',
+    title: 'Eat breakfast',
+    description: 'Prepare a nourishing breakfast to fuel your morning momentum.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'affirmations',
+    emoji: '📖',
+    title: 'Read affirmations or a quote',
+    description: 'Read an inspiring affirmation or quote to set a positive tone for the day.',
+    type: RoutineStepType.info,
+  ),
+  MorningTaskOption(
+    id: 'journal',
+    emoji: '✍️',
+    title: 'Journal gratitude',
+    description: 'Write down three things you’re grateful for to build a gratitude mindset.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'mirror_love',
+    emoji: '🧍',
+    title: 'Say “I love you” in the mirror',
+    description: 'Face the mirror and tell yourself “I love you” five times with confidence.',
+    type: RoutineStepType.task,
+  ),
+  MorningTaskOption(
+    id: 'selfie',
+    emoji: '📸',
+    title: 'Take morning selfie',
+    description: 'Capture your fresh start or simulate a selfie to celebrate your glow-up.',
+    type: RoutineStepType.photo,
+  ),
+  MorningTaskOption(
+    id: 'playlist',
+    emoji: '🎧',
+    title: 'Play morning playlist',
+    description: 'Hit play on a feel-good playlist and move to the music as you get ready.',
+    type: RoutineStepType.info,
+  ),
+];
 
 enum AlarmChallengeType { tap, math, copy }
 
@@ -1009,7 +1356,7 @@ class MorningRoutineTab extends StatefulWidget {
 }
 
 class MorningRoutineTabState extends State<MorningRoutineTab> {
-  final List<RoutineStep> _steps = RoutineStep.defaultSteps();
+  List<RoutineStep> _steps = RoutineStep.defaultSteps();
   bool _isRunning = false;
   bool _isCompleted = false;
   int _currentIndex = 0;
@@ -1018,8 +1365,11 @@ class MorningRoutineTabState extends State<MorningRoutineTab> {
   final List<RoutineStepResult> _results = [];
 
   // Public method invoked when the alarm dismisses to reset and begin automatically.
-  void startRoutine({bool fromAlarm = false}) {
+  void startRoutine({bool fromAlarm = false, List<String>? taskIds}) {
+    final nextSteps =
+        (taskIds != null && taskIds.isNotEmpty) ? RoutineStep.fromTaskIds(taskIds) : RoutineStep.defaultSteps();
     setState(() {
+      _steps = nextSteps;
       _isRunning = true;
       _isCompleted = false;
       _currentIndex = 0;
@@ -1699,6 +2049,21 @@ class RoutineStep {
       ),
     ];
   }
+
+  static List<RoutineStep> fromTaskIds(List<String> ids) {
+    if (ids.isEmpty) {
+      return defaultSteps();
+    }
+    final optionsById = {for (final option in morningTaskOptions) option.id: option};
+    final steps = <RoutineStep>[];
+    for (final id in ids) {
+      final option = optionsById[id];
+      if (option != null) {
+        steps.add(option.toRoutineStep());
+      }
+    }
+    return steps.isEmpty ? defaultSteps() : steps;
+  }
 }
 
 // Supported routine step types with helper getters for display purposes.
@@ -1760,6 +2125,107 @@ class RoutineStepResult {
       note: json['note'] as String? ?? '',
       imageBase64: json['imageBase64'] as String?,
     );
+  }
+}
+
+class ScheduledAlarm {
+  const ScheduledAlarm({
+    required this.hour,
+    required this.minute,
+    required this.days,
+    required this.toneId,
+    required this.challengeIds,
+    required this.morningTasks,
+  });
+
+  final int hour;
+  final int minute;
+  final List<int> days;
+  final String toneId;
+  final List<String> challengeIds;
+  final List<String> morningTasks;
+
+  Map<String, dynamic> toJson() => {
+        'hour': hour,
+        'minute': minute,
+        'days': days,
+        'toneId': toneId,
+        'challenges': challengeIds,
+        'morningTasks': morningTasks,
+      };
+
+  ScheduledAlarm copyWith({
+    int? hour,
+    int? minute,
+    List<int>? days,
+    String? toneId,
+    List<String>? challengeIds,
+    List<String>? morningTasks,
+  }) {
+    return ScheduledAlarm(
+      hour: hour ?? this.hour,
+      minute: minute ?? this.minute,
+      days: days ?? List<int>.from(this.days),
+      toneId: toneId ?? this.toneId,
+      challengeIds: challengeIds ?? List<String>.from(this.challengeIds),
+      morningTasks: morningTasks ?? List<String>.from(this.morningTasks),
+    );
+  }
+
+  factory ScheduledAlarm.fromJson(Map<String, dynamic> json) {
+    final rawDays = (json['days'] as List<dynamic>? ?? <dynamic>[])
+        .map((value) => value is int ? value : int.tryParse(value.toString()) ?? DateTime.now().weekday)
+        .toList();
+    final rawChallenges = (json['challenges'] as List<dynamic>? ?? <dynamic>[])
+        .map((value) => value.toString())
+        .toList();
+    final rawTasks = (json['morningTasks'] as List<dynamic>? ?? <dynamic>[])
+        .map((value) => value.toString())
+        .toList();
+    return ScheduledAlarm(
+      hour: json['hour'] as int? ?? 7,
+      minute: json['minute'] as int? ?? 0,
+      days: rawDays.isEmpty ? [DateTime.now().weekday] : rawDays,
+      toneId: json['toneId'] as String? ?? alarmToneOptions.first.id,
+      challengeIds: rawChallenges.isEmpty ? [AlarmChallengeType.tap.name] : rawChallenges,
+      morningTasks: rawTasks,
+    );
+  }
+}
+
+class AlarmPreferences {
+  AlarmPreferences._(this._preferences);
+
+  static const _key = 'scheduled_alarm_config';
+  final SharedPreferences _preferences;
+
+  static Future<AlarmPreferences> create() async {
+    final prefs = await SharedPreferences.getInstance();
+    return AlarmPreferences._(prefs);
+  }
+
+  Future<ScheduledAlarm?> loadAlarm() async {
+    final jsonString = _preferences.getString(_key);
+    if (jsonString == null || jsonString.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(jsonString);
+      if (decoded is Map<String, dynamic>) {
+        return ScheduledAlarm.fromJson(decoded);
+      }
+      if (decoded is Map) {
+        return ScheduledAlarm.fromJson(Map<String, dynamic>.from(decoded as Map));
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveAlarm(ScheduledAlarm alarm) async {
+    final encoded = jsonEncode(alarm.toJson());
+    await _preferences.setString(_key, encoded);
   }
 }
 
