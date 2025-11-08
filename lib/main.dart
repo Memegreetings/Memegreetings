@@ -2732,7 +2732,7 @@ class _ProfileOnboardingScreenState extends State<ProfileOnboardingScreen> {
       minute: wakeTime.minute,
       days: List<int>.generate(7, (index) => index + 1),
       toneId: alarmToneOptions.first.id,
-      challengeIds: const [AlarmChallengeType.tap.name],
+      challengeIds: [AlarmChallengeType.tap.name],
       morningTasks: taskIds,
     );
 
